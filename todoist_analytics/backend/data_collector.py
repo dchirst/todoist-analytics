@@ -2,28 +2,52 @@ import time
 
 import numpy as np
 import pandas as pd
-import todoist
+import requests
 
-from todoist_analytics.frontend.colorscale import color_code_to_hex
+from todoist_analytics.frontend.colorscale import color_code_to_hex, color_to_hex
 
+
+def get_completed(token: str, limit: int, offset: int):
+    url = "https://api.todoist.com/sync/v9/completed/get_all"
+    resp = requests.get(url, headers={
+        "Authorization": f"Bearer {token}"
+    },
+                        params={
+                            "limit": limit,
+                            "offset": offset
+                        })
+    return resp.json()
+
+
+def get_state(token):
+    state_url = "https://api.todoist.com/sync/v9/sync"
+    resp = requests.post(state_url, headers={
+        "Authorization": f"Bearer {token}"
+    },
+                         data={
+                             "sync_token": '*',
+                             "resource_types": '["all"]'
+                         })
+
+    return resp.json()
 
 class DataCollector:
     def __init__(self, token):
         self.token = token
         self.items = pd.DataFrame()
         self.projects = pd.DataFrame()
-        self.api = todoist.TodoistAPI(self.token)
-        self.api.sync()
         self.current_offset = 0
+        self.state = get_state(self.token)
+
 
     def get_user_timezone(self):
-        self.tz = self.api.state["user"]["tz_info"]["timezone"]
+        self.tz = self.state["user"]["tz_info"]["timezone"]
 
     def _collect_active_tasks(self):
         pass
 
     def _collect_completed_tasks(self, limit, offset):
-        data = self.api.completed.get_all(limit=limit, offset=offset)
+        data = get_completed(token=self.token,limit=limit, offset=offset)
         if data == "Service Unavailable\n":
             time.sleep(3)
             data = self._collect_completed_tasks(limit, offset)
@@ -39,7 +63,7 @@ class DataCollector:
         self.items = self.items.append(preprocessed_items)
         self.projects = self.projects.append(preprocessed_projects)
 
-    def _collect_all_completed_tasks(self, limit=10000):
+    def _collect_all_completed_tasks(self, limit=10_000):
         """
         gets all the tasks and stores it
         this function may take too long to complete and timeout,
@@ -59,12 +83,11 @@ class DataCollector:
                 stop_collecting = True
 
     def _state_to_dataframe(self, state, key):
-        f = [d.data for d in state[str(key)]]
-        f = pd.DataFrame(f)
+        f = pd.DataFrame.from_dict(state[str(key)])
         return f
 
     def _collect_active_tasks(self):
-        self.active_tasks = self._state_to_dataframe(self.api.state, "items")
+        self.active_tasks = self._state_to_dataframe(self.state, "items")
         keep_columns = [
             "checked",
             "content",
@@ -74,18 +97,17 @@ class DataCollector:
             "labels",
             "priority",
             "project_id",
-            "date_added",
+            "added_at",
             "id",
         ]
         self.active_tasks = self.active_tasks[keep_columns]
         self.active_tasks = self.active_tasks.loc[self.active_tasks["checked"] == 0]
 
     def _preprocess_completed_tasks(self, completed_tasks, projects):
-
         projects = projects.rename({"id": "project_id"}, axis=1)
 
         completed_tasks["datehour_completed"] = pd.to_datetime(
-            completed_tasks["completed_date"]
+            completed_tasks["completed_at"]
         )
 
         self.get_user_timezone()
@@ -121,7 +143,7 @@ class DataCollector:
         )
 
         completed_tasks["hex_color"] = completed_tasks["color"].apply(
-            lambda x: color_code_to_hex[int(x)]["hex"]
+            lambda x: color_to_hex[x]
         )
 
         completed_tasks = completed_tasks.drop_duplicates().reset_index(drop=True)

@@ -20,3 +20,5 @@ color_code_to_hex = {
     48: {"color_name": "grey", "hex": "#b8b8b8"},
     49: {"color_name": "taupe", "hex": "#ccac93"},
 }
+
+color_to_hex = {i["color_name"]: i["hex"] for i in color_code_to_hex.values()}
